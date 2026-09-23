@@ -145,6 +145,14 @@
   .error-msg { color: var(--inactive); font-size: 13px; margin-top: 10px; }
   .topbar { display: flex; justify-content: flex-end; margin-bottom: 6px; }
   .user-chip { font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 10px; }
+
+  .group-header td { background: var(--panel-2); color: var(--accent); font-family: 'Barlow Condensed', sans-serif; text-transform: uppercase; letter-spacing: 0.4px; font-weight: 700; font-size: 13px; padding: 9px 14px; border-bottom: 1px solid var(--border); }
+  .inline-input { background: transparent; border: 1px solid transparent; color: var(--text); padding: 5px 6px; border-radius: 4px; font-size: 13px; font-family: inherit; width: 100%; min-width: 108px; }
+  .inline-input:hover { border-color: var(--border); }
+  .inline-input:focus { border-color: var(--accent); background: var(--panel-2); outline: none; }
+  select.inline-input { cursor: pointer; }
+  .cell-stack { display: flex; flex-direction: column; gap: 4px; min-width: 130px; }
+  .cell-stack .badge { align-self: flex-start; }
 </style>
 </head>
 <body>
@@ -244,6 +252,7 @@ let carregadoModulo = { epi: false, exames: false, nrs: false, convocacoes: fals
 let erroModulo = { epi: '', exames: '', nrs: '', convocacoes: '', folgas: '' };
 let editandoModulo = null; // { modulo, dados }
 let buscaModulo = '';
+let abaModulo = 'ativos';
 
 // ---------- Autenticação ----------
 async function verificarSessao() {
@@ -282,7 +291,8 @@ function diasAte(dataStr) {
 function statusPorDias(dias) {
   if (dias === null) return { cls: 'semdata', label: 'SEM DATA' };
   if (dias < 0) return { cls: 'vencido', label: 'VENCIDO' };
-  if (dias <= 30) return { cls: 'vencendo', label: `${dias}D` };
+  if (dias === 0) return { cls: 'vencendo', label: 'VENCE HOJE' };
+  if (dias <= 30) return { cls: 'vencendo', label: `${dias} DIA${dias === 1 ? '' : 'S'}` };
   return { cls: 'ok', label: 'OK' };
 }
 function piorStatus(a, b) {
@@ -296,6 +306,15 @@ function statusLinha(config, item) {
   const comData = statusList.filter(s => s.cls !== 'semdata');
   if (comData.length === 0) return { cls: 'semdata', label: 'SEM DATA' };
   return comData.reduce((pior, s) => piorStatus(pior, s));
+}
+function agruparPorEmpresa(itens, pegaEmpresa) {
+  const grupos = {};
+  itens.forEach(it => {
+    const emp = pegaEmpresa(it) || 'Sem empresa definida';
+    (grupos[emp] = grupos[emp] || []).push(it);
+  });
+  return Object.keys(grupos).sort((a, b) => a.localeCompare(b))
+    .map(k => ({ empresa: k, itens: grupos[k].sort((a, b) => (a.nome || a.funcionario_nome).localeCompare(b.nome || b.funcionario_nome)) }));
 }
 function diasFolgaDevidos(item) {
   const ref = item.ultima_folga || item.inicio_trabalho;
@@ -378,11 +397,13 @@ function abrirNovoModulo(chave) {
   editandoModulo = { modulo: chave, dados: vazio };
   render();
 }
-function abrirEdicaoModulo(chave, item) {
-  editandoModulo = { modulo: chave, dados: { ...item } };
-  render();
-}
 function fecharModalModulo() { editandoModulo = null; render(); }
+
+async function atualizarCampoInline(chave, id, campo, valor) {
+  const { error } = await supabaseClient.from(MODULOS[chave].tabela).update({ [campo]: valor || null }).eq('id', id);
+  if (error) { alert('Erro ao salvar: ' + error.message); return; }
+  await carregarModulo(chave);
+}
 
 async function salvarRegistroModulo() {
   const { modulo, dados } = editandoModulo;
@@ -393,13 +414,8 @@ async function salvarRegistroModulo() {
   config.campos.forEach(c => registro[c.id] = dados[c.id] || null);
 
   salvando = true; render();
-  if (dados.id) {
-    const { error } = await supabaseClient.from(config.tabela).update(registro).eq('id', dados.id);
-    if (error) { alert('Erro ao salvar: ' + error.message); salvando = false; render(); return; }
-  } else {
-    const { error } = await supabaseClient.from(config.tabela).insert(registro);
-    if (error) { alert('Erro ao salvar: ' + error.message); salvando = false; render(); return; }
-  }
+  const { error } = await supabaseClient.from(config.tabela).insert(registro);
+  if (error) { alert('Erro ao salvar: ' + error.message); salvando = false; render(); return; }
   salvando = false; editandoModulo = null;
   await carregarModulo(modulo);
 }
@@ -408,7 +424,6 @@ async function excluirRegistroModulo(chave, id) {
   if (!confirm('Excluir este registro?')) return;
   const { error } = await supabaseClient.from(MODULOS[chave].tabela).delete().eq('id', id);
   if (error) { alert('Erro ao excluir: ' + error.message); return; }
-  editandoModulo = null;
   await carregarModulo(chave);
 }
 
@@ -466,6 +481,7 @@ function renderCadastro() {
     `<div class="chip ${emp === filtroEmpresa ? 'active' : ''}" data-emp="${esc(emp)}">${esc(emp)}</div>`
   ).join('');
   const itens = aplicaFiltro(listaBase);
+  const grupos = agruparPorEmpresa(itens, f => f.empresa_cliente);
 
   let conteudoHtml = '';
   if (erroCarregarFunc) {
@@ -478,31 +494,35 @@ function renderCadastro() {
           <th>Categoria</th><th>Salário</th><th>Telefone</th><th>Status</th><th></th>
         </tr></thead>
         <tbody>
-          ${itens.map(f => `
-            <tr>
-              <td class="nome">${esc(f.nome)}</td>
-              <td>${esc(f.cargo || '—')}</td>
-              <td>${esc(f.empresa_cliente || '—')}</td>
-              <td>${esc(f.empresa_registradora || '—')}</td>
-              <td>${esc(f.categoria || '—')}</td>
-              <td class="mono">${esc(f.salario || '—')}</td>
-              <td class="mono">${esc(f.telefone || '—')}</td>
-              <td><span class="badge ativo">ATIVO</span></td>
-              <td>
-                <div class="row-actions">
-                  <button class="icon-btn" data-edit="${f.id}">Editar</button>
-                  <button class="icon-btn inativar" data-toggle="${f.id}">Inativar</button>
-                </div>
-              </td>
-            </tr>
+          ${grupos.map(g => `
+            <tr class="group-header"><td colspan="9">${esc(g.empresa)} · ${g.itens.length}</td></tr>
+            ${g.itens.map(f => `
+              <tr>
+                <td class="nome">${esc(f.nome)}</td>
+                <td>${esc(f.cargo || '—')}</td>
+                <td>${esc(f.empresa_cliente || '—')}</td>
+                <td>${esc(f.empresa_registradora || '—')}</td>
+                <td>${esc(f.categoria || '—')}</td>
+                <td class="mono">${esc(f.salario || '—')}</td>
+                <td class="mono">${esc(f.telefone || '—')}</td>
+                <td><span class="badge ativo">ATIVO</span></td>
+                <td>
+                  <div class="row-actions">
+                    <button class="icon-btn" data-edit="${f.id}">Editar</button>
+                    <button class="icon-btn inativar" data-toggle="${f.id}">Inativar</button>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
           `).join('')}
         </tbody>
       </table></div>
     ` : `<div class="empty">Nenhum funcionário ativo encontrado.</div>`;
   } else {
-    conteudoHtml = itens.length ? `
+    conteudoHtml = itens.length ? grupos.map(g => `
+      <div class="subtitle" style="padding-left:0;margin:16px 0 8px;font-weight:600;color:var(--accent);text-transform:uppercase;font-size:12px;letter-spacing:0.4px">${esc(g.empresa)} · ${g.itens.length}</div>
       <div class="inativos-list">
-        ${itens.map(f => `
+        ${g.itens.map(f => `
           <div class="inativo-row">
             <div class="inativo-info">
               <div class="inativo-nome">${esc(f.nome)}</div>
@@ -515,7 +535,7 @@ function renderCadastro() {
           </div>
         `).join('')}
       </div>
-    ` : `<div class="empty">Nenhum funcionário inativo no momento.</div>`;
+    `).join('') : `<div class="empty">Nenhum funcionário inativo no momento.</div>`;
   }
 
   return `
@@ -578,71 +598,105 @@ function renderModalFuncionario() {
     </div>`;
 }
 
+function inlineDate(chave, item, campoId) {
+  return `<input class="inline-input" type="date" data-mod="${chave}" data-id="${item.id}" data-campo="${campoId}" value="${esc(item[campoId] || '')}">`;
+}
+function inlineSelect(chave, item, campo) {
+  return `<select class="inline-input" data-mod="${chave}" data-id="${item.id}" data-campo="${campo.id}">
+    ${campo.opcoes.map(o => `<option ${item[campo.id] === o ? 'selected' : ''}>${o}</option>`).join('')}
+  </select>`;
+}
+function inlineText(chave, item, campoId) {
+  return `<input class="inline-input" type="text" data-mod="${chave}" data-id="${item.id}" data-campo="${campoId}" value="${esc(item[campoId] || '')}">`;
+}
+
 function renderModuloGenerico(chave) {
   const config = MODULOS[chave];
   if (!carregadoModulo[chave]) { carregarModulo(chave); return '<div class="loading">Carregando...</div>'; }
   if (erroModulo[chave]) return `<div class="banner error">${esc(erroModulo[chave])}</div>`;
 
-  let itens = dadosModulo[chave].filter(item =>
-    !buscaModulo || item.funcionario_nome.toLowerCase().includes(buscaModulo.toLowerCase())
-  );
+  const mapaFunc = {};
+  funcionarios.forEach(f => mapaFunc[f.id] = f);
 
-  if (chave === 'folgas') {
-    itens = itens.map(item => ({ ...item, _dias: diasFolgaDevidos(item) }))
-      .sort((a, b) => b._dias - a._dias);
+  let itens = dadosModulo[chave]
+    .map(item => ({ ...item, _funcionario: mapaFunc[item.funcionario_id] || null }))
+    .filter(item => !buscaModulo || item.funcionario_nome.toLowerCase().includes(buscaModulo.toLowerCase()))
+    .filter(item => {
+      const status = item._funcionario ? item._funcionario.status : 'ativo';
+      return status === (abaModulo === 'ativos' ? 'ativo' : 'inativo');
+    });
+
+  const ativosCount = dadosModulo[chave].filter(i => { const f = mapaFunc[i.funcionario_id]; return (f ? f.status : 'ativo') === 'ativo'; }).length;
+  const inativosCount = dadosModulo[chave].filter(i => { const f = mapaFunc[i.funcionario_id]; return (f ? f.status : 'ativo') === 'inativo'; }).length;
+
+  const grupos = agruparPorEmpresa(itens, item => item._funcionario ? item._funcionario.empresa_cliente : 'Sem vínculo ao cadastro');
+
+  let conteudo;
+  if (!itens.length) {
+    conteudo = `<div class="empty">Nenhum registro encontrado.</div>`;
+  } else if (chave === 'folgas') {
+    const linhasGrupo = grupos.map(g => `
+      <tr class="group-header"><td colspan="6">${esc(g.empresa)} · ${g.itens.length}</td></tr>
+      ${g.itens.map(item => {
+        const dias = diasFolgaDevidos(item);
+        return `
+        <tr>
+          <td class="nome">${esc(item.funcionario_nome)}</td>
+          <td>${inlineDate(chave, item, 'inicio_trabalho')}</td>
+          <td>${inlineDate(chave, item, 'ultima_folga')}</td>
+          <td>${dias > 0 ? `<span class="badge vencendo">${dias} DIA${dias === 1 ? '' : 'S'}</span>` : `<span class="badge ok">OK</span>`}</td>
+          <td>${inlineText(chave, item, 'obs')}</td>
+          <td><button class="icon-btn inativar" data-mod-del="${item.id}" data-mod="${chave}">Excluir</button></td>
+        </tr>`;
+      }).join('')}
+    `).join('');
+    conteudo = `<div class="table-wrap"><table>
+      <thead><tr><th>Nome</th><th>Início trabalho</th><th>Última folga</th><th>Dias devidos</th><th>Observações</th><th></th></tr></thead>
+      <tbody>${linhasGrupo}</tbody>
+    </table></div>`;
+  } else if (chave === 'nrs') {
+    const camposNr = config.campos.filter(c => c.vencimento);
+    const linhasGrupo = grupos.map(g => `
+      <tr class="group-header"><td colspan="${camposNr.length + 3}">${esc(g.empresa)} · ${g.itens.length}</td></tr>
+      ${g.itens.map(item => `
+        <tr>
+          <td class="nome">${esc(item.funcionario_nome)}</td>
+          ${camposNr.map(c => {
+            const s = statusPorDias(diasAte(item[c.id]));
+            return `<td><div class="cell-stack">${inlineDate(chave, item, c.id)}<span class="badge ${s.cls}">${s.label}</span></div></td>`;
+          }).join('')}
+          <td>${inlineSelect(chave, item, config.campos.find(c => c.id === 'assinatura'))}</td>
+          <td><button class="icon-btn inativar" data-mod-del="${item.id}" data-mod="${chave}">Excluir</button></td>
+        </tr>
+      `).join('')}
+    `).join('');
+    conteudo = `<div class="table-wrap"><table>
+      <thead><tr><th>Nome</th>${camposNr.map(c => `<th>${c.label}</th>`).join('')}<th>Assinatura</th><th></th></tr></thead>
+      <tbody>${linhasGrupo}</tbody>
+    </table></div>`;
   } else {
-    itens = itens.map(item => ({ ...item, _status: statusLinha(config, item) }))
-      .sort((a, b) => {
-        const ordem = { vencido: 0, vencendo: 1, semdata: 2, ok: 3 };
-        return ordem[a._status.cls] - ordem[b._status.cls];
-      });
+    const linhasGrupo = grupos.map(g => `
+      <tr class="group-header"><td colspan="${config.campos.length + 3}">${esc(g.empresa)} · ${g.itens.length}</td></tr>
+      ${g.itens.map(item => {
+        const status = statusLinha(config, item);
+        return `
+        <tr>
+          <td class="nome">${esc(item.funcionario_nome)}</td>
+          ${config.campos.map(c => {
+            if (c.tipo === 'date') return `<td>${inlineDate(chave, item, c.id)}</td>`;
+            if (c.tipo === 'select') return `<td>${inlineSelect(chave, item, c)}</td>`;
+            return `<td>${inlineText(chave, item, c.id)}</td>`;
+          }).join('')}
+          <td><span class="badge ${status.cls}">${status.label}</span></td>
+          <td><button class="icon-btn inativar" data-mod-del="${item.id}" data-mod="${chave}">Excluir</button></td>
+        </tr>`;
+      }).join('')}
+    `).join('');
+    conteudo = `<div class="table-wrap"><table>
+      <thead><tr><th>Nome</th>${config.campos.map(c => `<th>${c.label}</th>`).join('')}<th>Status</th><th></th></tr></thead>
+      <tbody>${linhasGrupo}</tbody>
+    </table></div>`;
   }
-
-  const colunas = chave === 'folgas'
-    ? ['Início trabalho', 'Última folga', 'Dias devidos', 'Observações']
-    : config.campos.map(c => c.label);
-
-  const linhas = itens.map(item => {
-    const celulas = chave === 'folgas'
-      ? [
-          fmtData(item.inicio_trabalho),
-          fmtData(item.ultima_folga),
-          item._dias > 0 ? `<span class="badge vencendo">${item._dias} dias</span>` : `<span class="badge ok">OK</span>`,
-          esc(item.obs || '—')
-        ]
-      : config.campos.map(c => {
-          if (c.tipo === 'date') return fmtData(item[c.id]);
-          if (c.id === 'assinatura') {
-            const cls = item[c.id] === 'OK' ? 'ok' : (item[c.id] === 'NÃO' ? 'vencido' : 'semdata');
-            return `<span class="badge ${cls}">${esc(item[c.id] || '—')}</span>`;
-          }
-          return esc(item[c.id] || '—');
-        });
-
-    const statusCel = chave === 'folgas' ? '' : `<td><span class="badge ${item._status.cls}">${item._status.label}</span></td>`;
-
-    return `
-      <tr>
-        <td class="nome">${esc(item.funcionario_nome)}</td>
-        ${celulas.map(c => `<td>${c}</td>`).join('')}
-        ${statusCel}
-        <td>
-          <div class="row-actions">
-            <button class="icon-btn" data-mod-edit="${item.id}" data-mod="${chave}">Editar</button>
-            <button class="icon-btn inativar" data-mod-del="${item.id}" data-mod="${chave}">Excluir</button>
-          </div>
-        </td>
-      </tr>`;
-  }).join('');
-
-  const conteudo = itens.length ? `
-    <div class="table-wrap"><table>
-      <thead><tr>
-        <th>Nome</th>${colunas.map(c => `<th>${c}</th>`).join('')}${chave === 'folgas' ? '' : '<th>Status</th>'}<th></th>
-      </tr></thead>
-      <tbody>${linhas}</tbody>
-    </table></div>
-  ` : `<div class="empty">Nenhum registro encontrado.</div>`;
 
   return `
     <h1 style="font-size:24px">${config.titulo}</h1>
@@ -651,6 +705,11 @@ function renderModuloGenerico(chave) {
       <input type="text" id="busca-modulo" placeholder="Buscar por nome..." value="${esc(buscaModulo)}">
       <button class="primary" id="btn-novo-modulo" data-mod="${chave}">+ Novo registro</button>
     </div>
+    <div class="tabs">
+      <div class="tab ${abaModulo === 'ativos' ? 'active' : ''}" data-abamod="ativos">Ativos <span class="count">${ativosCount}</span></div>
+      <div class="tab ${abaModulo === 'inativos' ? 'active' : ''}" data-abamod="inativos">Inativos <span class="count">${inativosCount}</span></div>
+    </div>
+    <div style="margin-bottom:16px"></div>
     ${conteudo}
   `;
 }
@@ -679,18 +738,17 @@ function renderModalModulo() {
   return `
     <div class="overlay" id="overlay-modulo">
       <div class="modal">
-        <h2>${dados.id ? 'Editar registro' : 'Novo registro'} · ${config.titulo}</h2>
+        <h2>Novo registro · ${config.titulo}</h2>
         <div class="field">
           <label>Funcionário</label>
           <select id="mf-funcionario">
             <option value="">— Selecione —</option>
             ${opcoesFuncionarios.map(f => `<option value="${f.id}" ${dados.funcionario_id === f.id ? 'selected' : ''}>${esc(f.nome)}${f.status === 'inativo' ? ' (inativo)' : ''}</option>`).join('')}
           </select>
-          ${!dados.funcionario_id && dados.funcionario_nome ? `<div class="hint">Nome original na planilha: ${esc(dados.funcionario_nome)} (não vinculado ao cadastro)</div>` : ''}
         </div>
         ${camposHtml}
         <div class="modal-actions">
-          <div>${dados.id ? `<button class="ghost" id="btn-excluir-modulo">Excluir registro</button>` : ''}</div>
+          <div></div>
           <div class="save-row">
             <button class="ghost" id="btn-cancelar-modulo">Cancelar</button>
             <button class="primary" id="btn-salvar-modulo" ${salvando ? 'disabled' : ''}>${salvando ? 'Salvando...' : 'Salvar'}</button>
@@ -735,7 +793,7 @@ function render() {
 
   document.getElementById('btn-sair').addEventListener('click', sair);
   document.querySelectorAll('.modtab').forEach(el => el.addEventListener('click', () => {
-    moduloAtivo = el.dataset.mod; buscaModulo = ''; render();
+    moduloAtivo = el.dataset.mod; buscaModulo = ''; abaModulo = 'ativos'; render();
   }));
 
   if (moduloAtivo === 'cadastro') {
@@ -753,11 +811,11 @@ function render() {
     if (buscaEl) buscaEl.addEventListener('input', e => { buscaModulo = e.target.value; render(); preservarFoco('busca-modulo'); });
     const btnNovo = document.getElementById('btn-novo-modulo');
     if (btnNovo) btnNovo.addEventListener('click', () => abrirNovoModulo(btnNovo.dataset.mod));
-    document.querySelectorAll('[data-mod-edit]').forEach(el => el.addEventListener('click', () => {
-      const item = dadosModulo[el.dataset.mod].find(x => x.id == el.dataset.modEdit);
-      if (item) abrirEdicaoModulo(el.dataset.mod, item);
-    }));
+    document.querySelectorAll('[data-abamod]').forEach(el => el.addEventListener('click', () => { abaModulo = el.dataset.abamod; render(); }));
     document.querySelectorAll('[data-mod-del]').forEach(el => el.addEventListener('click', () => excluirRegistroModulo(el.dataset.mod, el.dataset.modDel)));
+    document.querySelectorAll('.inline-input[data-mod]').forEach(el => el.addEventListener('change', () => {
+      atualizarCampoInline(el.dataset.mod, el.dataset.id, el.dataset.campo, el.value);
+    }));
   }
 
   if (editando) {
@@ -791,7 +849,6 @@ function render() {
     document.getElementById('overlay-modulo').addEventListener('click', (e) => { if (e.target.id === 'overlay-modulo') fecharModalModulo(); });
     document.getElementById('btn-cancelar-modulo').addEventListener('click', fecharModalModulo);
     document.getElementById('mf-funcionario').addEventListener('change', e => { editandoModulo.dados.funcionario_id = e.target.value; });
-    if (dados.id) document.getElementById('btn-excluir-modulo').addEventListener('click', () => excluirRegistroModulo(modulo, dados.id));
     document.getElementById('btn-salvar-modulo').addEventListener('click', () => {
       config.campos.forEach(c => { editandoModulo.dados[c.id] = document.getElementById(`mf-${c.id}`).value.trim ? document.getElementById(`mf-${c.id}`).value.trim() : document.getElementById(`mf-${c.id}`).value; });
       salvarRegistroModulo();
