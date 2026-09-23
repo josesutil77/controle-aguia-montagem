@@ -1,0 +1,12 @@
+{
+  "name": "Controle de Equipes - Águia Montagem",
+  "short_name": "Controle Equipes",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#171D24",
+  "theme_color": "#171D24",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
