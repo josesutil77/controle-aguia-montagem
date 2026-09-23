@@ -24,7 +24,8 @@
     --active-bg: rgba(63,167,150,0.14);
     --inactive: #C24C4C;
     --inactive-bg: rgba(194,76,76,0.14);
-    --danger: #C24C4C;
+    --semdata: #6B7684;
+    --semdata-bg: rgba(107,118,132,0.14);
   }
   :root:not([data-theme="light"]) { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -58,6 +59,13 @@
   }
   button.ghost:hover { color: var(--text); border-color: var(--text-dim); }
 
+  .modtabs { display: flex; gap: 4px; margin-bottom: 18px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+  .modtab {
+    padding: 10px 16px; cursor: pointer; color: var(--text-dim); font-size: 14px; font-weight: 500;
+    border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap;
+  }
+  .modtab.active { color: var(--text); border-bottom-color: var(--accent); }
+
   .tabs { display: flex; gap: 4px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
   .tab {
     padding: 10px 18px; cursor: pointer; color: var(--text-dim); font-size: 15px; font-weight: 500;
@@ -82,9 +90,11 @@
   tbody tr:hover td { background: var(--panel-2); }
   td.nome { font-weight: 600; }
   td.mono { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: var(--text-dim); }
-  .badge { font-size: 11px; font-family: 'IBM Plex Mono', monospace; padding: 4px 9px; border-radius: 5px; white-space: nowrap; }
-  .badge.ativo { background: var(--active-bg); color: var(--active); }
-  .badge.inativo { background: var(--inactive-bg); color: var(--inactive); }
+  .badge { font-size: 11px; font-family: 'IBM Plex Mono', monospace; padding: 4px 9px; border-radius: 5px; white-space: nowrap; display: inline-block; }
+  .badge.ativo, .badge.ok { background: var(--active-bg); color: var(--active); }
+  .badge.inativo, .badge.vencido { background: var(--inactive-bg); color: var(--inactive); }
+  .badge.vencendo { background: rgba(232,163,61,0.14); color: var(--accent); }
+  .badge.semdata { background: var(--semdata-bg); color: var(--semdata); }
   .row-actions { display: flex; gap: 6px; white-space: nowrap; }
   .icon-btn {
     background: transparent; border: 1px solid var(--border); color: var(--text-dim);
@@ -115,6 +125,7 @@
   .field label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.4px; }
   .field input, .field select { width: 100%; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 6px; font-size: 14px; font-family: inherit; }
   .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+  .field .hint { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   @media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } }
   .modal-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 20px; gap: 10px; flex-wrap: wrap; }
@@ -148,23 +159,91 @@ if (window.SUPABASE_URL && window.SUPABASE_ANON_KEY) {
   configPronta = true;
 }
 
-// ---------- Estado da aplicação ----------
-let sessao = null;          // sessão de login atual
+// ---------- Estado geral ----------
+let sessao = null;
+let carregado = false;
+let erroLogin = '';
+let salvando = false;
+let moduloAtivo = 'cadastro';
+
+// ---------- Cadastro de funcionários ----------
 let funcionarios = [];
-let abaAtiva = 'ativos';    // 'ativos' | 'inativos'
+let abaAtiva = 'ativos';
 let filtroEmpresa = 'Todas';
 let busca = '';
 let editando = null;
-let carregado = false;
-let erroLogin = '';
-let erroCarregar = '';
-let salvando = false;
+let erroCarregarFunc = '';
 
 const CAMPOS_VAZIOS = {
   id: null, nome: '', moradia: '', telefone: '', cargo: '',
   empresa_cliente: '', empresa_registradora: '', categoria: 'Mensalista',
   salario: '', data_chegada: '', status: 'ativo'
 };
+
+// ---------- Módulos de vencimento (config-driven) ----------
+const MODULOS = {
+  epi: {
+    tabela: 'vencimento_epi',
+    titulo: 'Vencimento de Fichas de EPI',
+    subtitulo: 'Assinatura mensal',
+    campos: [
+      { id: 'data_inicial', label: 'Data inicial', tipo: 'date' },
+      { id: 'data_final', label: 'Data final (vencimento)', tipo: 'date', vencimento: true },
+      { id: 'empresa_registrado', label: 'Empresa registrado', tipo: 'text' },
+      { id: 'assinatura', label: 'Assinatura', tipo: 'select', opcoes: ['PENDENTE', 'OK'] }
+    ]
+  },
+  exames: {
+    tabela: 'vencimento_exames',
+    titulo: 'Vencimento de Exames',
+    subtitulo: 'Periódico anual',
+    campos: [
+      { id: 'data_exame', label: 'Data do exame', tipo: 'date' },
+      { id: 'data_prox_exame', label: 'Data do próximo exame', tipo: 'date', vencimento: true },
+      { id: 'empresa_registrado', label: 'Empresa registrado', tipo: 'text' },
+      { id: 'assinatura', label: 'Assinatura', tipo: 'select', opcoes: ['PENDENTE', 'OK'] }
+    ]
+  },
+  nrs: {
+    tabela: 'vencimento_nrs',
+    titulo: 'Vencimento de NRs',
+    subtitulo: 'NR-33 e NR-34: 1 ano · NR-35: 2 anos',
+    campos: [
+      { id: 'nr33_vencimento', label: 'NR-33 (vencimento)', tipo: 'date', vencimento: true },
+      { id: 'nr34_vencimento', label: 'NR-34 (vencimento)', tipo: 'date', vencimento: true },
+      { id: 'nr35_vencimento', label: 'NR-35 (vencimento)', tipo: 'date', vencimento: true },
+      { id: 'assinatura', label: 'Assinatura', tipo: 'select', opcoes: ['PENDENTE', 'OK', 'NÃO'] }
+    ]
+  },
+  convocacoes: {
+    tabela: 'convocacoes',
+    titulo: 'Controle de Convocações',
+    subtitulo: 'Intermitente e experiência',
+    campos: [
+      { id: 'data_inicial', label: 'Data inicial', tipo: 'date' },
+      { id: 'data_final', label: 'Data final', tipo: 'date', vencimento: true },
+      { id: 'empresa_prestacao_servicos', label: 'Empresa (prestação de serviços)', tipo: 'text' },
+      { id: 'contrato', label: 'Tipo de contrato', tipo: 'select', opcoes: ['EXPERIENCIA', 'INTERMITENTE'] },
+      { id: 'assinatura', label: 'Assinatura', tipo: 'select', opcoes: ['PENDENTE', 'OK'] }
+    ]
+  },
+  folgas: {
+    tabela: 'folgas_campo',
+    titulo: 'Folgas de Campo',
+    subtitulo: '2 dias aos 2 meses fora, 3 aos 3, acumulando se não voltar',
+    campos: [
+      { id: 'inicio_trabalho', label: 'Início do período de trabalho', tipo: 'date' },
+      { id: 'ultima_folga', label: 'Última folga tirada', tipo: 'date' },
+      { id: 'obs', label: 'Observações', tipo: 'text' }
+    ]
+  }
+};
+
+let dadosModulo = { epi: [], exames: [], nrs: [], convocacoes: [], folgas: [] };
+let carregadoModulo = { epi: false, exames: false, nrs: false, convocacoes: false, folgas: false };
+let erroModulo = { epi: '', exames: '', nrs: '', convocacoes: '', folgas: '' };
+let editandoModulo = null; // { modulo, dados }
+let buscaModulo = '';
 
 // ---------- Autenticação ----------
 async function verificarSessao() {
@@ -187,17 +266,53 @@ async function sair() {
   await supabaseClient.auth.signOut();
   sessao = null;
   funcionarios = [];
+  dadosModulo = { epi: [], exames: [], nrs: [], convocacoes: [], folgas: [] };
+  carregadoModulo = { epi: false, exames: false, nrs: false, convocacoes: false, folgas: false };
+  moduloAtivo = 'cadastro';
   render();
 }
 
-// ---------- Dados ----------
+// ---------- Datas / status de vencimento ----------
+function diasAte(dataStr) {
+  if (!dataStr) return null;
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const d = new Date(dataStr + 'T00:00:00');
+  return Math.round((d - hoje) / 86400000);
+}
+function statusPorDias(dias) {
+  if (dias === null) return { cls: 'semdata', label: 'SEM DATA' };
+  if (dias < 0) return { cls: 'vencido', label: 'VENCIDO' };
+  if (dias <= 30) return { cls: 'vencendo', label: `${dias}D` };
+  return { cls: 'ok', label: 'OK' };
+}
+function piorStatus(a, b) {
+  const ordem = { vencido: 0, vencendo: 1, semdata: 2, ok: 3 };
+  return ordem[a.cls] <= ordem[b.cls] ? a : b;
+}
+function statusLinha(config, item) {
+  const camposVenc = config.campos.filter(c => c.vencimento);
+  if (camposVenc.length === 0) return { cls: 'ok', label: 'OK' };
+  let pior = { cls: 'ok', label: 'OK' };
+  for (const c of camposVenc) {
+    const s = statusPorDias(diasAte(item[c.id]));
+    pior = piorStatus(pior, s);
+  }
+  return pior;
+}
+function diasFolgaDevidos(item) {
+  const ref = item.ultima_folga || item.inicio_trabalho;
+  if (!ref) return 0;
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const d = new Date(ref + 'T00:00:00');
+  const meses = Math.floor((hoje - d) / (1000 * 60 * 60 * 24 * 30));
+  return meses >= 2 ? meses : 0;
+}
+
+// ---------- Dados: Cadastro de funcionários ----------
 async function carregarFuncionarios() {
-  erroCarregar = '';
-  const { data, error } = await supabaseClient
-    .from('funcionarios')
-    .select('*')
-    .order('nome', { ascending: true });
-  if (error) { erroCarregar = 'Não foi possível carregar os dados: ' + error.message; }
+  erroCarregarFunc = '';
+  const { data, error } = await supabaseClient.from('funcionarios').select('*').order('nome', { ascending: true });
+  if (error) { erroCarregarFunc = 'Não foi possível carregar os dados: ' + error.message; }
   else { funcionarios = data; }
   carregado = true;
   render();
@@ -207,13 +322,12 @@ function empresasClientes(lista) {
   const set = new Set(lista.map(f => f.empresa_cliente).filter(Boolean));
   return ['Todas', ...Array.from(set).sort()];
 }
-
 function aplicaFiltro(lista) {
   return lista.filter(f => {
     if (filtroEmpresa !== 'Todas' && f.empresa_cliente !== filtroEmpresa) return false;
     if (busca && !f.nome.toLowerCase().includes(busca.toLowerCase())) return false;
     return true;
-  }).sort((a,b) => a.nome.localeCompare(b.nome));
+  }).sort((a, b) => a.nome.localeCompare(b.nome));
 }
 
 function abrirNovo() { editando = { ...CAMPOS_VAZIOS, status: abaAtiva === 'inativos' ? 'inativo' : 'ativo' }; render(); }
@@ -230,11 +344,9 @@ async function salvarFuncionario(dados) {
     const { error } = await supabaseClient.from('funcionarios').insert(dados);
     if (error) { alert('Erro ao salvar: ' + error.message); salvando = false; render(); return; }
   }
-  salvando = false;
-  editando = null;
+  salvando = false; editando = null;
   await carregarFuncionarios();
 }
-
 async function toggleStatus(id) {
   const f = funcionarios.find(x => x.id === id);
   if (!f) return;
@@ -243,7 +355,6 @@ async function toggleStatus(id) {
   if (error) { alert('Erro ao atualizar status: ' + error.message); return; }
   await carregarFuncionarios();
 }
-
 async function excluirFuncionario(id) {
   if (!confirm('Excluir este cadastro permanentemente? Se a pessoa puder voltar, prefira manter como "Inativo".')) return;
   const { error } = await supabaseClient.from('funcionarios').delete().eq('id', id);
@@ -252,7 +363,63 @@ async function excluirFuncionario(id) {
   await carregarFuncionarios();
 }
 
-function esc(s) { return (s || '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// ---------- Dados: Módulos de vencimento ----------
+async function carregarModulo(chave) {
+  const config = MODULOS[chave];
+  erroModulo[chave] = '';
+  const { data, error } = await supabaseClient.from(config.tabela).select('*').order('funcionario_nome', { ascending: true });
+  if (error) { erroModulo[chave] = 'Não foi possível carregar: ' + error.message; }
+  else { dadosModulo[chave] = data; }
+  carregadoModulo[chave] = true;
+  render();
+}
+
+function abrirNovoModulo(chave) {
+  const vazio = { id: null, funcionario_id: '', funcionario_nome: '' };
+  MODULOS[chave].campos.forEach(c => vazio[c.id] = c.tipo === 'select' ? c.opcoes[0] : '');
+  editandoModulo = { modulo: chave, dados: vazio };
+  render();
+}
+function abrirEdicaoModulo(chave, item) {
+  editandoModulo = { modulo: chave, dados: { ...item } };
+  render();
+}
+function fecharModalModulo() { editandoModulo = null; render(); }
+
+async function salvarRegistroModulo() {
+  const { modulo, dados } = editandoModulo;
+  const config = MODULOS[modulo];
+  if (!dados.funcionario_id) { alert('Selecione o funcionário.'); return; }
+  const funcionario = funcionarios.find(f => f.id === dados.funcionario_id);
+  const registro = { funcionario_id: dados.funcionario_id, funcionario_nome: funcionario ? funcionario.nome : dados.funcionario_nome };
+  config.campos.forEach(c => registro[c.id] = dados[c.id] || null);
+
+  salvando = true; render();
+  if (dados.id) {
+    const { error } = await supabaseClient.from(config.tabela).update(registro).eq('id', dados.id);
+    if (error) { alert('Erro ao salvar: ' + error.message); salvando = false; render(); return; }
+  } else {
+    const { error } = await supabaseClient.from(config.tabela).insert(registro);
+    if (error) { alert('Erro ao salvar: ' + error.message); salvando = false; render(); return; }
+  }
+  salvando = false; editandoModulo = null;
+  await carregarModulo(modulo);
+}
+
+async function excluirRegistroModulo(chave, id) {
+  if (!confirm('Excluir este registro?')) return;
+  const { error } = await supabaseClient.from(MODULOS[chave].tabela).delete().eq('id', id);
+  if (error) { alert('Erro ao excluir: ' + error.message); return; }
+  editandoModulo = null;
+  await carregarModulo(chave);
+}
+
+function esc(s) { return (s || '').toString().replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function fmtData(iso) {
+  if (!iso) return '—';
+  const [a, m, d] = iso.split('-');
+  return `${d}/${m}/${a}`;
+}
 
 // ---------- Telas ----------
 function renderSemConfig() {
@@ -266,7 +433,6 @@ function renderSemConfig() {
     </div>
   `;
 }
-
 function renderLogin() {
   return `
     <div class="login-wrap">
@@ -282,21 +448,19 @@ function renderLogin() {
   `;
 }
 
-function render() {
-  const root = document.getElementById('root');
+function renderModTabs() {
+  const itens = [
+    ['cadastro', 'Cadastro'],
+    ['epi', 'EPI'],
+    ['exames', 'Exames'],
+    ['nrs', 'NRs'],
+    ['folgas', 'Folgas de Campo'],
+    ['convocacoes', 'Convocações']
+  ];
+  return `<div class="modtabs">${itens.map(([k, l]) => `<div class="modtab ${moduloAtivo === k ? 'active' : ''}" data-mod="${k}">${l}</div>`).join('')}</div>`;
+}
 
-  if (!configPronta) { root.innerHTML = renderSemConfig(); return; }
-  if (!carregado) { root.innerHTML = '<div class="loading">Carregando...</div>'; return; }
-  if (!sessao) {
-    root.innerHTML = renderLogin();
-    document.getElementById('btn-login').addEventListener('click', () => {
-      const email = document.getElementById('login-email').value.trim();
-      const senha = document.getElementById('login-senha').value;
-      fazerLogin(email, senha);
-    });
-    return;
-  }
-
+function renderCadastro() {
   const ativos = funcionarios.filter(f => f.status === 'ativo');
   const inativos = funcionarios.filter(f => f.status === 'inativo');
   const listaBase = abaAtiva === 'ativos' ? ativos : inativos;
@@ -306,8 +470,8 @@ function render() {
   const itens = aplicaFiltro(listaBase);
 
   let conteudoHtml = '';
-  if (erroCarregar) {
-    conteudoHtml = `<div class="banner error">${esc(erroCarregar)}</div>`;
+  if (erroCarregarFunc) {
+    conteudoHtml = `<div class="banner error">${esc(erroCarregarFunc)}</div>`;
   } else if (abaAtiva === 'ativos') {
     conteudoHtml = itens.length ? `
       <div class="table-wrap"><table>
@@ -356,10 +520,24 @@ function render() {
     ` : `<div class="empty">Nenhum funcionário inativo no momento.</div>`;
   }
 
-  let modalHtml = '';
-  if (editando) {
-    const d = editando;
-    modalHtml = `
+  return `
+    <div class="toolbar">
+      <input type="text" id="busca" placeholder="Buscar por nome..." value="${esc(busca)}">
+      <button class="primary" id="btn-novo">+ Novo funcionário</button>
+    </div>
+    <div class="tabs">
+      <div class="tab ${abaAtiva === 'ativos' ? 'active' : ''}" data-tab="ativos">Ativos <span class="count">${ativos.length}</span></div>
+      <div class="tab ${abaAtiva === 'inativos' ? 'active' : ''}" data-tab="inativos">Inativos <span class="count">${inativos.length}</span></div>
+    </div>
+    <div class="chips">${chips}</div>
+    ${conteudoHtml}
+  `;
+}
+
+function renderModalFuncionario() {
+  if (!editando) return '';
+  const d = editando;
+  return `
     <div class="overlay" id="overlay">
       <div class="modal">
         <h2>${d.id ? 'Editar funcionário' : 'Novo funcionário'}</h2>
@@ -368,7 +546,7 @@ function render() {
           <div class="field"><label>Cargo</label><input id="f-cargo" type="text" value="${esc(d.cargo)}"></div>
           <div class="field"><label>Categoria</label>
             <select id="f-categoria">
-              ${['Mensalista','Intermitente','Experiência','Por fora','Por hora'].map(c => `<option ${d.categoria===c?'selected':''}>${c}</option>`).join('')}
+              ${['Mensalista', 'Intermitente', 'Experiência', 'Por fora', 'Por hora'].map(c => `<option ${d.categoria === c ? 'selected' : ''}>${c}</option>`).join('')}
             </select>
           </div>
         </div>
@@ -387,8 +565,8 @@ function render() {
         <div class="field">
           <label>Status</label>
           <div class="status-toggle">
-            <button type="button" class="status-btn ${d.status==='ativo'?'on ativo':''}" id="btn-ativo">Ativo</button>
-            <button type="button" class="status-btn ${d.status==='inativo'?'on inativo':''}" id="btn-inativo">Inativo</button>
+            <button type="button" class="status-btn ${d.status === 'ativo' ? 'on ativo' : ''}" id="btn-ativo">Ativo</button>
+            <button type="button" class="status-btn ${d.status === 'inativo' ? 'on inativo' : ''}" id="btn-inativo">Inativo</button>
           </div>
         </div>
         <div class="modal-actions">
@@ -400,7 +578,146 @@ function render() {
         </div>
       </div>
     </div>`;
+}
+
+function renderModuloGenerico(chave) {
+  const config = MODULOS[chave];
+  if (!carregadoModulo[chave]) { carregarModulo(chave); return '<div class="loading">Carregando...</div>'; }
+  if (erroModulo[chave]) return `<div class="banner error">${esc(erroModulo[chave])}</div>`;
+
+  let itens = dadosModulo[chave].filter(item =>
+    !buscaModulo || item.funcionario_nome.toLowerCase().includes(buscaModulo.toLowerCase())
+  );
+
+  if (chave === 'folgas') {
+    itens = itens.map(item => ({ ...item, _dias: diasFolgaDevidos(item) }))
+      .sort((a, b) => b._dias - a._dias);
+  } else {
+    itens = itens.map(item => ({ ...item, _status: statusLinha(config, item) }))
+      .sort((a, b) => {
+        const ordem = { vencido: 0, vencendo: 1, semdata: 2, ok: 3 };
+        return ordem[a._status.cls] - ordem[b._status.cls];
+      });
   }
+
+  const colunas = chave === 'folgas'
+    ? ['Início trabalho', 'Última folga', 'Dias devidos', 'Observações']
+    : config.campos.map(c => c.label);
+
+  const linhas = itens.map(item => {
+    const celulas = chave === 'folgas'
+      ? [
+          fmtData(item.inicio_trabalho),
+          fmtData(item.ultima_folga),
+          item._dias > 0 ? `<span class="badge vencendo">${item._dias} dias</span>` : `<span class="badge ok">OK</span>`,
+          esc(item.obs || '—')
+        ]
+      : config.campos.map(c => {
+          if (c.tipo === 'date') return fmtData(item[c.id]);
+          if (c.id === 'assinatura') {
+            const cls = item[c.id] === 'OK' ? 'ok' : (item[c.id] === 'NÃO' ? 'vencido' : 'semdata');
+            return `<span class="badge ${cls}">${esc(item[c.id] || '—')}</span>`;
+          }
+          return esc(item[c.id] || '—');
+        });
+
+    const statusCel = chave === 'folgas' ? '' : `<td><span class="badge ${item._status.cls}">${item._status.label}</span></td>`;
+
+    return `
+      <tr>
+        <td class="nome">${esc(item.funcionario_nome)}</td>
+        ${celulas.map(c => `<td>${c}</td>`).join('')}
+        ${statusCel}
+        <td>
+          <div class="row-actions">
+            <button class="icon-btn" data-mod-edit="${item.id}" data-mod="${chave}">Editar</button>
+            <button class="icon-btn inativar" data-mod-del="${item.id}" data-mod="${chave}">Excluir</button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+
+  const conteudo = itens.length ? `
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>Nome</th>${colunas.map(c => `<th>${c}</th>`).join('')}${chave === 'folgas' ? '' : '<th>Status</th>'}<th></th>
+      </tr></thead>
+      <tbody>${linhas}</tbody>
+    </table></div>
+  ` : `<div class="empty">Nenhum registro encontrado.</div>`;
+
+  return `
+    <h1 style="font-size:24px">${config.titulo}</h1>
+    <div class="subtitle" style="padding-left:0;margin-bottom:16px">${config.subtitulo}</div>
+    <div class="toolbar">
+      <input type="text" id="busca-modulo" placeholder="Buscar por nome..." value="${esc(buscaModulo)}">
+      <button class="primary" id="btn-novo-modulo" data-mod="${chave}">+ Novo registro</button>
+    </div>
+    ${conteudo}
+  `;
+}
+
+function renderModalModulo() {
+  if (!editandoModulo) return '';
+  const { modulo, dados } = editandoModulo;
+  const config = MODULOS[modulo];
+  const opcoesFuncionarios = [...funcionarios].sort((a, b) => a.nome.localeCompare(b.nome));
+
+  const camposHtml = config.campos.map(c => {
+    if (c.tipo === 'select') {
+      return `
+        <div class="field"><label>${c.label}</label>
+          <select id="mf-${c.id}">
+            ${c.opcoes.map(o => `<option ${dados[c.id] === o ? 'selected' : ''}>${o}</option>`).join('')}
+          </select>
+        </div>`;
+    }
+    if (c.tipo === 'date') {
+      return `<div class="field"><label>${c.label}</label><input id="mf-${c.id}" type="date" value="${esc(dados[c.id])}"></div>`;
+    }
+    return `<div class="field"><label>${c.label}</label><input id="mf-${c.id}" type="text" value="${esc(dados[c.id])}"></div>`;
+  }).join('');
+
+  return `
+    <div class="overlay" id="overlay-modulo">
+      <div class="modal">
+        <h2>${dados.id ? 'Editar registro' : 'Novo registro'} · ${config.titulo}</h2>
+        <div class="field">
+          <label>Funcionário</label>
+          <select id="mf-funcionario">
+            <option value="">— Selecione —</option>
+            ${opcoesFuncionarios.map(f => `<option value="${f.id}" ${dados.funcionario_id === f.id ? 'selected' : ''}>${esc(f.nome)}${f.status === 'inativo' ? ' (inativo)' : ''}</option>`).join('')}
+          </select>
+          ${!dados.funcionario_id && dados.funcionario_nome ? `<div class="hint">Nome original na planilha: ${esc(dados.funcionario_nome)} (não vinculado ao cadastro)</div>` : ''}
+        </div>
+        ${camposHtml}
+        <div class="modal-actions">
+          <div>${dados.id ? `<button class="ghost" id="btn-excluir-modulo">Excluir registro</button>` : ''}</div>
+          <div class="save-row">
+            <button class="ghost" id="btn-cancelar-modulo">Cancelar</button>
+            <button class="primary" id="btn-salvar-modulo" ${salvando ? 'disabled' : ''}>${salvando ? 'Salvando...' : 'Salvar'}</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function render() {
+  const root = document.getElementById('root');
+
+  if (!configPronta) { root.innerHTML = renderSemConfig(); return; }
+  if (!carregado) { root.innerHTML = '<div class="loading">Carregando...</div>'; return; }
+  if (!sessao) {
+    root.innerHTML = renderLogin();
+    document.getElementById('btn-login').addEventListener('click', () => {
+      const email = document.getElementById('login-email').value.trim();
+      const senha = document.getElementById('login-senha').value;
+      fazerLogin(email, senha);
+    });
+    return;
+  }
+
+  const corpo = moduloAtivo === 'cadastro' ? renderCadastro() : renderModuloGenerico(moduloAtivo);
 
   root.innerHTML = `
     <div class="topbar">
@@ -409,32 +726,41 @@ function render() {
     <div class="header-row">
       <div>
         <h1>Controle de Equipes</h1>
-        <div class="subtitle">Cadastro central de funcionários</div>
+        <div class="subtitle">Águia Montagem</div>
       </div>
     </div>
-    <div class="toolbar">
-      <input type="text" id="busca" placeholder="Buscar por nome..." value="${esc(busca)}">
-      <button class="primary" id="btn-novo">+ Novo funcionário</button>
-    </div>
-    <div class="tabs">
-      <div class="tab ${abaAtiva==='ativos'?'active':''}" data-tab="ativos">Ativos <span class="count">${ativos.length}</span></div>
-      <div class="tab ${abaAtiva==='inativos'?'active':''}" data-tab="inativos">Inativos <span class="count">${inativos.length}</span></div>
-    </div>
-    <div class="chips">${chips}</div>
-    ${conteudoHtml}
-    ${modalHtml}
+    ${renderModTabs()}
+    ${corpo}
+    ${renderModalFuncionario()}
+    ${renderModalModulo()}
   `;
 
   document.getElementById('btn-sair').addEventListener('click', sair);
-  document.getElementById('busca').addEventListener('input', e => { busca = e.target.value; render(); preservarFoco('busca'); });
-  document.getElementById('btn-novo').addEventListener('click', abrirNovo);
-  document.querySelectorAll('.tab').forEach(el => el.addEventListener('click', () => { abaAtiva = el.dataset.tab; filtroEmpresa = 'Todas'; render(); }));
-  document.querySelectorAll('.chip').forEach(el => el.addEventListener('click', () => { filtroEmpresa = el.dataset.emp; render(); }));
-  document.querySelectorAll('[data-edit]').forEach(el => el.addEventListener('click', () => {
-    const f = funcionarios.find(x => x.id == el.dataset.edit);
-    if (f) abrirEdicao(f);
+  document.querySelectorAll('.modtab').forEach(el => el.addEventListener('click', () => {
+    moduloAtivo = el.dataset.mod; buscaModulo = ''; render();
   }));
-  document.querySelectorAll('[data-toggle]').forEach(el => el.addEventListener('click', () => toggleStatus(el.dataset.toggle)));
+
+  if (moduloAtivo === 'cadastro') {
+    document.getElementById('busca').addEventListener('input', e => { busca = e.target.value; render(); preservarFoco('busca'); });
+    document.getElementById('btn-novo').addEventListener('click', abrirNovo);
+    document.querySelectorAll('.tab').forEach(el => el.addEventListener('click', () => { abaAtiva = el.dataset.tab; filtroEmpresa = 'Todas'; render(); }));
+    document.querySelectorAll('.chip').forEach(el => el.addEventListener('click', () => { filtroEmpresa = el.dataset.emp; render(); }));
+    document.querySelectorAll('[data-edit]').forEach(el => el.addEventListener('click', () => {
+      const f = funcionarios.find(x => x.id == el.dataset.edit);
+      if (f) abrirEdicao(f);
+    }));
+    document.querySelectorAll('[data-toggle]').forEach(el => el.addEventListener('click', () => toggleStatus(el.dataset.toggle)));
+  } else {
+    const buscaEl = document.getElementById('busca-modulo');
+    if (buscaEl) buscaEl.addEventListener('input', e => { buscaModulo = e.target.value; render(); preservarFoco('busca-modulo'); });
+    const btnNovo = document.getElementById('btn-novo-modulo');
+    if (btnNovo) btnNovo.addEventListener('click', () => abrirNovoModulo(btnNovo.dataset.mod));
+    document.querySelectorAll('[data-mod-edit]').forEach(el => el.addEventListener('click', () => {
+      const item = dadosModulo[el.dataset.mod].find(x => x.id == el.dataset.modEdit);
+      if (item) abrirEdicaoModulo(el.dataset.mod, item);
+    }));
+    document.querySelectorAll('[data-mod-del]').forEach(el => el.addEventListener('click', () => excluirRegistroModulo(el.dataset.mod, el.dataset.modDel)));
+  }
 
   if (editando) {
     document.getElementById('overlay').addEventListener('click', (e) => { if (e.target.id === 'overlay') fecharModal(); });
@@ -458,6 +784,19 @@ function render() {
       };
       if (!dados.nome) { alert('Informe o nome do funcionário.'); return; }
       salvarFuncionario(dados);
+    });
+  }
+
+  if (editandoModulo) {
+    const { modulo, dados } = editandoModulo;
+    const config = MODULOS[modulo];
+    document.getElementById('overlay-modulo').addEventListener('click', (e) => { if (e.target.id === 'overlay-modulo') fecharModalModulo(); });
+    document.getElementById('btn-cancelar-modulo').addEventListener('click', fecharModalModulo);
+    document.getElementById('mf-funcionario').addEventListener('change', e => { editandoModulo.dados.funcionario_id = e.target.value; });
+    if (dados.id) document.getElementById('btn-excluir-modulo').addEventListener('click', () => excluirRegistroModulo(modulo, dados.id));
+    document.getElementById('btn-salvar-modulo').addEventListener('click', () => {
+      config.campos.forEach(c => { editandoModulo.dados[c.id] = document.getElementById(`mf-${c.id}`).value.trim ? document.getElementById(`mf-${c.id}`).value.trim() : document.getElementById(`mf-${c.id}`).value; });
+      salvarRegistroModulo();
     });
   }
 }
