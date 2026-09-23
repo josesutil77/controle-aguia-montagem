@@ -292,12 +292,10 @@ function piorStatus(a, b) {
 function statusLinha(config, item) {
   const camposVenc = config.campos.filter(c => c.vencimento);
   if (camposVenc.length === 0) return { cls: 'ok', label: 'OK' };
-  let pior = { cls: 'ok', label: 'OK' };
-  for (const c of camposVenc) {
-    const s = statusPorDias(diasAte(item[c.id]));
-    pior = piorStatus(pior, s);
-  }
-  return pior;
+  const statusList = camposVenc.map(c => statusPorDias(diasAte(item[c.id])));
+  const comData = statusList.filter(s => s.cls !== 'semdata');
+  if (comData.length === 0) return { cls: 'semdata', label: 'SEM DATA' };
+  return comData.reduce((pior, s) => piorStatus(pior, s));
 }
 function diasFolgaDevidos(item) {
   const ref = item.ultima_folga || item.inicio_trabalho;
