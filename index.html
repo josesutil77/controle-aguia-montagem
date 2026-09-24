@@ -32,6 +32,11 @@
   body { margin: 0; background: var(--bg); color: var(--text); font-family: 'IBM Plex Sans', sans-serif; min-height: 100vh; }
   .app { max-width: 1280px; margin: 0 auto; padding: 26px 20px 60px; }
 
+  .sticky-header {
+    position: sticky; top: 0; z-index: 30; background: var(--bg);
+    margin: 0 -20px; padding: 26px 20px 10px; border-bottom: 1px solid var(--border);
+  }
+
   h1 {
     font-family: 'Barlow Condensed', sans-serif;
     font-weight: 700; font-size: 32px; letter-spacing: 0.5px; margin: 0 0 2px;
@@ -551,7 +556,7 @@ function renderCadastro() {
     `).join('') : `<div class="empty">Nenhum funcionário inativo no momento.</div>`;
   }
 
-  return `
+  const cabecalho = `
     <div class="toolbar">
       <input type="text" id="busca" placeholder="Buscar por nome..." value="${esc(busca)}">
       <button class="primary" id="btn-novo">+ Novo funcionário</button>
@@ -561,8 +566,8 @@ function renderCadastro() {
       <div class="tab ${abaAtiva === 'inativos' ? 'active' : ''}" data-tab="inativos">Inativos <span class="count">${inativos.length}</span></div>
     </div>
     <div class="chips">${chips}</div>
-    ${conteudoHtml}
   `;
+  return { cabecalho, corpo: conteudoHtml };
 }
 
 function renderModalFuncionario() {
@@ -633,8 +638,8 @@ function inlineText(chave, item, campoId) {
 
 function renderModuloGenerico(chave) {
   const config = MODULOS[chave];
-  if (!carregadoModulo[chave]) { carregarModulo(chave); return '<div class="loading">Carregando...</div>'; }
-  if (erroModulo[chave]) return `<div class="banner error">${esc(erroModulo[chave])}</div>`;
+  if (!carregadoModulo[chave]) { carregarModulo(chave); return { cabecalho: '', corpo: '<div class="loading">Carregando...</div>' }; }
+  if (erroModulo[chave]) return { cabecalho: '', corpo: `<div class="banner error">${esc(erroModulo[chave])}</div>` };
 
   const mapaFunc = {};
   funcionarios.forEach(f => mapaFunc[f.id] = f);
@@ -726,7 +731,7 @@ function renderModuloGenerico(chave) {
     </table></div>`;
   }
 
-  return `
+  const cabecalho = `
     <h1 style="font-size:24px">${config.titulo}</h1>
     <div class="subtitle" style="padding-left:0;margin-bottom:16px">${config.subtitulo}</div>
     <div class="toolbar">
@@ -737,9 +742,8 @@ function renderModuloGenerico(chave) {
       <div class="tab ${abaModulo === 'ativos' ? 'active' : ''}" data-abamod="ativos">Ativos <span class="count">${ativosCount}</span></div>
       <div class="tab ${abaModulo === 'inativos' ? 'active' : ''}" data-abamod="inativos">Inativos <span class="count">${inativosCount}</span></div>
     </div>
-    <div style="margin-bottom:16px"></div>
-    ${conteudo}
   `;
+  return { cabecalho, corpo: `<div style="margin-top:16px">${conteudo}</div>` };
 }
 
 function renderModalModulo() {
@@ -801,19 +805,22 @@ function render() {
     return;
   }
 
-  const corpo = moduloAtivo === 'cadastro' ? renderCadastro() : renderModuloGenerico(moduloAtivo);
+  const { cabecalho, corpo } = moduloAtivo === 'cadastro' ? renderCadastro() : renderModuloGenerico(moduloAtivo);
 
   root.innerHTML = `
-    <div class="topbar">
-      <div class="user-chip">${esc(sessao.user.email)} <button class="ghost" id="btn-sair">Sair</button></div>
-    </div>
-    <div class="header-row">
-      <div>
-        <h1>Controle de Equipes</h1>
-        <div class="subtitle">Águia Montagem</div>
+    <div class="sticky-header">
+      <div class="topbar">
+        <div class="user-chip">${esc(sessao.user.email)} <button class="ghost" id="btn-sair">Sair</button></div>
       </div>
+      <div class="header-row">
+        <div>
+          <h1>Controle de Equipes</h1>
+          <div class="subtitle">Águia Montagem</div>
+        </div>
+      </div>
+      ${renderModTabs()}
+      ${cabecalho}
     </div>
-    ${renderModTabs()}
     ${corpo}
     ${renderModalFuncionario()}
     ${renderModalModulo()}
