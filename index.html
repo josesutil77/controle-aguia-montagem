@@ -201,10 +201,11 @@ const MODULOS = {
     tabela: 'vencimento_epi',
     titulo: 'Vencimento de Fichas de EPI',
     subtitulo: 'Assinatura mensal',
+    limiteAlerta: 5,
     campos: [
       { id: 'data_inicial', label: 'Data inicial', tipo: 'date' },
       { id: 'data_final', label: 'Data final (vencimento)', tipo: 'date', vencimento: true },
-      { id: 'empresa_registrado', label: 'Empresa registrado', tipo: 'text' },
+      { id: 'empresa_registrado', label: 'Empresa registrado', tipo: 'text', origemCadastro: 'empresa_registradora' },
       { id: 'assinatura', label: 'Assinatura', tipo: 'select', opcoes: ['PENDENTE', 'OK'] }
     ]
   },
@@ -215,7 +216,7 @@ const MODULOS = {
     campos: [
       { id: 'data_exame', label: 'Data do exame', tipo: 'date' },
       { id: 'data_prox_exame', label: 'Data do próximo exame', tipo: 'date', vencimento: true },
-      { id: 'empresa_registrado', label: 'Empresa registrado', tipo: 'text' },
+      { id: 'empresa_registrado', label: 'Empresa registrado', tipo: 'text', origemCadastro: 'empresa_registradora' },
       { id: 'assinatura', label: 'Assinatura', tipo: 'select', opcoes: ['PENDENTE', 'OK'] }
     ]
   },
@@ -234,10 +235,11 @@ const MODULOS = {
     tabela: 'convocacoes',
     titulo: 'Controle de Convocações',
     subtitulo: 'Intermitente e experiência',
+    limiteAlerta: 3,
     campos: [
       { id: 'data_inicial', label: 'Data inicial', tipo: 'date' },
       { id: 'data_final', label: 'Data final', tipo: 'date', vencimento: true },
-      { id: 'empresa_prestacao_servicos', label: 'Empresa (prestação de serviços)', tipo: 'text' },
+      { id: 'empresa_prestacao_servicos', label: 'Empresa (prestação de serviços)', tipo: 'text', origemCadastro: 'empresa_cliente' },
       { id: 'contrato', label: 'Tipo de contrato', tipo: 'select', opcoes: ['EXPERIENCIA', 'INTERMITENTE'] },
       { id: 'assinatura', label: 'Assinatura', tipo: 'select', opcoes: ['PENDENTE', 'OK'] }
     ]
@@ -295,11 +297,15 @@ function diasAte(dataStr) {
   const d = new Date(dataStr + 'T00:00:00');
   return Math.round((d - hoje) / 86400000);
 }
-function statusPorDias(dias) {
+function statusPorDias(dias, limiteAlerta) {
+  if (limiteAlerta === undefined) limiteAlerta = 30;
   if (dias === null) return { cls: 'semdata', label: 'SEM DATA' };
   if (dias < 0) return { cls: 'vencido', label: 'VENCIDO' };
   if (dias === 0) return { cls: 'vencendo', label: 'VENCE HOJE' };
-  if (dias <= 30) return { cls: 'vencendo', label: `${dias} DIA${dias === 1 ? '' : 'S'}` };
+  if (dias <= 30) {
+    const cls = dias <= limiteAlerta ? 'vencendo' : 'ok';
+    return { cls, label: `${dias} DIA${dias === 1 ? '' : 'S'}` };
+  }
   return { cls: 'ok', label: 'OK' };
 }
 function piorStatus(a, b) {
@@ -309,7 +315,7 @@ function piorStatus(a, b) {
 function statusLinha(config, item) {
   const camposVenc = config.campos.filter(c => c.vencimento);
   if (camposVenc.length === 0) return { cls: 'ok', label: 'OK' };
-  const statusList = camposVenc.map(c => statusPorDias(diasAte(item[c.id])));
+  const statusList = camposVenc.map(c => statusPorDias(diasAte(item[c.id]), config.limiteAlerta));
   const comData = statusList.filter(s => s.cls !== 'semdata');
   if (comData.length === 0) return { cls: 'semdata', label: 'SEM DATA' };
   return comData.reduce((pior, s) => piorStatus(pior, s));
@@ -321,7 +327,7 @@ function agruparPorEmpresa(itens, pegaEmpresa) {
     (grupos[emp] = grupos[emp] || []).push(it);
   });
   return Object.keys(grupos).sort((a, b) => a.localeCompare(b))
-    .map(k => ({ empresa: k, itens: grupos[k].sort((a, b) => (a.nome || a.funcionario_nome).localeCompare(b.nome || b.funcionario_nome)) }));
+    .map(k => ({ empresa: k, itens: grupos[k].sort((a, b) => (a.nome || a._nome || a.funcionario_nome).localeCompare(b.nome || b._nome || b.funcionario_nome)) }));
 }
 function diasFolgaDevidos(item) {
   const ref = item.ultima_folga || item.inicio_trabalho;
@@ -611,8 +617,8 @@ function classeAssinatura(valor) {
   if (valor === 'PENDENTE') return 'st-vencendo';
   return 'st-semdata';
 }
-function inlineDate(chave, item, campoId, vencimento) {
-  const cls = vencimento ? 'st-' + statusPorDias(diasAte(item[campoId])).cls : '';
+function inlineDate(chave, item, campoId, vencimento, limiteAlerta) {
+  const cls = vencimento ? 'st-' + statusPorDias(diasAte(item[campoId]), limiteAlerta).cls : '';
   return `<input class="inline-input ${cls}" type="date" data-mod="${chave}" data-id="${item.id}" data-campo="${campoId}" value="${esc(item[campoId] || '')}">`;
 }
 function inlineSelect(chave, item, campo) {
@@ -634,8 +640,11 @@ function renderModuloGenerico(chave) {
   funcionarios.forEach(f => mapaFunc[f.id] = f);
 
   let itens = dadosModulo[chave]
-    .map(item => ({ ...item, _funcionario: mapaFunc[item.funcionario_id] || null }))
-    .filter(item => !buscaModulo || item.funcionario_nome.toLowerCase().includes(buscaModulo.toLowerCase()))
+    .map(item => {
+      const f = mapaFunc[item.funcionario_id] || null;
+      return { ...item, _funcionario: f, _nome: f ? f.nome : item.funcionario_nome };
+    })
+    .filter(item => !buscaModulo || item._nome.toLowerCase().includes(buscaModulo.toLowerCase()))
     .filter(item => {
       const status = item._funcionario ? item._funcionario.status : 'ativo';
       return status === (abaModulo === 'ativos' ? 'ativo' : 'inativo');
@@ -656,7 +665,7 @@ function renderModuloGenerico(chave) {
         const dias = diasFolgaDevidos(item);
         return `
         <tr>
-          <td class="nome">${esc(item.funcionario_nome)}</td>
+          <td class="nome">${esc(item._nome)}</td>
           <td>${inlineDate(chave, item, 'inicio_trabalho')}</td>
           <td>${inlineDate(chave, item, 'ultima_folga')}</td>
           <td>${dias > 0 ? `<span class="badge vencendo">${dias} DIA${dias === 1 ? '' : 'S'}</span>` : `<span class="badge ok">OK</span>`}</td>
@@ -675,10 +684,10 @@ function renderModuloGenerico(chave) {
       <tr class="group-header"><td colspan="${camposNr.length + 3}">${esc(g.empresa)} · ${g.itens.length}</td></tr>
       ${g.itens.map(item => `
         <tr>
-          <td class="nome">${esc(item.funcionario_nome)}</td>
+          <td class="nome">${esc(item._nome)}</td>
           ${camposNr.map(c => {
-            const s = statusPorDias(diasAte(item[c.id]));
-            return `<td><div class="cell-stack">${inlineDate(chave, item, c.id, true)}<span class="badge ${s.cls}">${s.label}</span></div></td>`;
+            const s = statusPorDias(diasAte(item[c.id]), config.limiteAlerta);
+            return `<td><div class="cell-stack">${inlineDate(chave, item, c.id, true, config.limiteAlerta)}<span class="badge ${s.cls}">${s.label}</span></div></td>`;
           }).join('')}
           <td>${inlineSelect(chave, item, config.campos.find(c => c.id === 'assinatura'))}</td>
           <td><button class="icon-btn inativar" data-mod-del="${item.id}" data-mod="${chave}">Excluir</button></td>
@@ -696,9 +705,13 @@ function renderModuloGenerico(chave) {
         const status = statusLinha(config, item);
         return `
         <tr>
-          <td class="nome">${esc(item.funcionario_nome)}</td>
+          <td class="nome">${esc(item._nome)}</td>
           ${config.campos.map(c => {
-            if (c.tipo === 'date') return `<td>${inlineDate(chave, item, c.id, !!c.vencimento)}</td>`;
+            if (c.origemCadastro) {
+              const valor = item._funcionario ? item._funcionario[c.origemCadastro] : item[c.id];
+              return `<td class="mono">${esc(valor || '—')}</td>`;
+            }
+            if (c.tipo === 'date') return `<td>${inlineDate(chave, item, c.id, !!c.vencimento, config.limiteAlerta)}</td>`;
             if (c.tipo === 'select') return `<td>${inlineSelect(chave, item, c)}</td>`;
             return `<td>${inlineText(chave, item, c.id)}</td>`;
           }).join('')}
@@ -735,7 +748,7 @@ function renderModalModulo() {
   const config = MODULOS[modulo];
   const opcoesFuncionarios = [...funcionarios].sort((a, b) => a.nome.localeCompare(b.nome));
 
-  const camposHtml = config.campos.map(c => {
+  const camposHtml = config.campos.filter(c => !c.origemCadastro).map(c => {
     if (c.tipo === 'select') {
       return `
         <div class="field"><label>${c.label}</label>
@@ -865,7 +878,10 @@ function render() {
     document.getElementById('btn-cancelar-modulo').addEventListener('click', fecharModalModulo);
     document.getElementById('mf-funcionario').addEventListener('change', e => { editandoModulo.dados.funcionario_id = e.target.value; });
     document.getElementById('btn-salvar-modulo').addEventListener('click', () => {
-      config.campos.forEach(c => { editandoModulo.dados[c.id] = document.getElementById(`mf-${c.id}`).value.trim ? document.getElementById(`mf-${c.id}`).value.trim() : document.getElementById(`mf-${c.id}`).value; });
+      config.campos.filter(c => !c.origemCadastro).forEach(c => {
+        const el = document.getElementById(`mf-${c.id}`);
+        editandoModulo.dados[c.id] = el.value.trim ? el.value.trim() : el.value;
+      });
       salvarRegistroModulo();
     });
   }
