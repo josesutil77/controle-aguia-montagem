@@ -808,10 +808,10 @@ function render() {
   const { cabecalho, corpo } = moduloAtivo === 'cadastro' ? renderCadastro() : renderModuloGenerico(moduloAtivo);
 
   root.innerHTML = `
+    <div class="topbar">
+      <div class="user-chip">${esc(sessao.user.email)} <button class="ghost" id="btn-sair">Sair</button></div>
+    </div>
     <div class="sticky-header">
-      <div class="topbar">
-        <div class="user-chip">${esc(sessao.user.email)} <button class="ghost" id="btn-sair">Sair</button></div>
-      </div>
       <div class="header-row">
         <div>
           <h1>Controle de Equipes</h1>
@@ -819,8 +819,8 @@ function render() {
         </div>
       </div>
       ${renderModTabs()}
-      ${cabecalho}
     </div>
+    ${cabecalho}
     ${corpo}
     ${renderModalFuncionario()}
     ${renderModalModulo()}
