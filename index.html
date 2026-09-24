@@ -151,6 +151,13 @@
   .inline-input:hover { border-color: var(--border); }
   .inline-input:focus { border-color: var(--accent); background: var(--panel-2); outline: none; }
   select.inline-input { cursor: pointer; }
+  .inline-input.st-vencido { background: var(--inactive-bg); border-color: var(--inactive); color: var(--inactive); font-weight: 600; }
+  .inline-input.st-vencendo { background: rgba(232,163,61,0.14); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .inline-input.st-ok { background: var(--active-bg); border-color: var(--active); color: var(--active); font-weight: 600; }
+  .inline-input.st-semdata { background: var(--semdata-bg); border-color: var(--semdata); color: var(--semdata); }
+  .inline-input.st-vencido::-webkit-calendar-picker-indicator,
+  .inline-input.st-vencendo::-webkit-calendar-picker-indicator,
+  .inline-input.st-ok::-webkit-calendar-picker-indicator { filter: brightness(0.9) saturate(2); }
   .cell-stack { display: flex; flex-direction: column; gap: 4px; min-width: 130px; }
   .cell-stack .badge { align-self: flex-start; }
 </style>
@@ -598,11 +605,19 @@ function renderModalFuncionario() {
     </div>`;
 }
 
-function inlineDate(chave, item, campoId) {
-  return `<input class="inline-input" type="date" data-mod="${chave}" data-id="${item.id}" data-campo="${campoId}" value="${esc(item[campoId] || '')}">`;
+function classeAssinatura(valor) {
+  if (valor === 'OK') return 'st-ok';
+  if (valor === 'NÃO') return 'st-vencido';
+  if (valor === 'PENDENTE') return 'st-vencendo';
+  return 'st-semdata';
+}
+function inlineDate(chave, item, campoId, vencimento) {
+  const cls = vencimento ? 'st-' + statusPorDias(diasAte(item[campoId])).cls : '';
+  return `<input class="inline-input ${cls}" type="date" data-mod="${chave}" data-id="${item.id}" data-campo="${campoId}" value="${esc(item[campoId] || '')}">`;
 }
 function inlineSelect(chave, item, campo) {
-  return `<select class="inline-input" data-mod="${chave}" data-id="${item.id}" data-campo="${campo.id}">
+  const cls = campo.id === 'assinatura' ? classeAssinatura(item[campo.id]) : '';
+  return `<select class="inline-input ${cls}" data-mod="${chave}" data-id="${item.id}" data-campo="${campo.id}">
     ${campo.opcoes.map(o => `<option ${item[campo.id] === o ? 'selected' : ''}>${o}</option>`).join('')}
   </select>`;
 }
@@ -663,7 +678,7 @@ function renderModuloGenerico(chave) {
           <td class="nome">${esc(item.funcionario_nome)}</td>
           ${camposNr.map(c => {
             const s = statusPorDias(diasAte(item[c.id]));
-            return `<td><div class="cell-stack">${inlineDate(chave, item, c.id)}<span class="badge ${s.cls}">${s.label}</span></div></td>`;
+            return `<td><div class="cell-stack">${inlineDate(chave, item, c.id, true)}<span class="badge ${s.cls}">${s.label}</span></div></td>`;
           }).join('')}
           <td>${inlineSelect(chave, item, config.campos.find(c => c.id === 'assinatura'))}</td>
           <td><button class="icon-btn inativar" data-mod-del="${item.id}" data-mod="${chave}">Excluir</button></td>
@@ -683,7 +698,7 @@ function renderModuloGenerico(chave) {
         <tr>
           <td class="nome">${esc(item.funcionario_nome)}</td>
           ${config.campos.map(c => {
-            if (c.tipo === 'date') return `<td>${inlineDate(chave, item, c.id)}</td>`;
+            if (c.tipo === 'date') return `<td>${inlineDate(chave, item, c.id, !!c.vencimento)}</td>`;
             if (c.tipo === 'select') return `<td>${inlineSelect(chave, item, c)}</td>`;
             return `<td>${inlineText(chave, item, c.id)}</td>`;
           }).join('')}
