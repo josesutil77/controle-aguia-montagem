@@ -30,7 +30,7 @@ self.addEventListener('fetch', (event) => {
   // se estiver sem conexão.
   if (event.request.mode === 'navigate' || url.pathname.endsWith('.html')) {
     event.respondWith(
-      fetch(event.request)
+      fetch(event.request, { cache: 'no-store' })
         .then((resposta) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, resposta.clone()));
           return resposta;
